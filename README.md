@@ -78,7 +78,7 @@ The model uses the following transaction attributes:
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/Credit-Card-Fraud-Detection.git
+git clone https://github.com/Vansh-Srivastava/Credit-Card-Fraud-Detection.git
 
 cd Credit-Card-Fraud-Detection
 ```
