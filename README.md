@@ -194,7 +194,7 @@ This project demonstrates:
 
 ## 👨‍💻 Author
 
-**Raj Srivastava**
+**Vansh Srivastava**
 
 B.Tech (Computer Science & Engineering - Data Science)
 
