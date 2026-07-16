@@ -4,6 +4,14 @@ An intelligent **Machine Learning-based Credit Card Fraud Detection System** bui
 
 ---
 
+## 📥 Dataset
+
+If you want to download the dataset directly from the original source, you can get it from Kaggle:
+
+**Dataset:** https://www.kaggle.com/datasets/dhanushnarayananr/credit-card-fraud
+
+---
+
 ## 🚀 Features
 
 * 🔍 Real-time fraud prediction for individual transactions
