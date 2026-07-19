@@ -8,7 +8,7 @@ An intelligent **Machine Learning-based Credit Card Fraud Detection System** bui
 
 Try the deployed application here:
 
-🔗 **Live Demo:** https://ai-powered-fraud-detection-5bkk4qk8dn6ioy5pjilrse.streamlit.app/
+🔗 **Live Demo:** https://ai-powered-credit-card-fraud-detection-5bkk4qk8dn6ioy5pjilrse.streamlit.app/
 
 No installation is required—simply open the link in your browser to explore the application, test individual transactions, or upload a CSV/Excel file for batch fraud detection.
 
