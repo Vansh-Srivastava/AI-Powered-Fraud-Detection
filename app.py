@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from io import BytesIO
+import warnings
+
+# Suppress XGBoost deprecation warning
+warnings.filterwarnings('ignore', category=UserWarning)
 
 st.set_page_config(
     page_title="Fraud Detection",
@@ -11,14 +15,26 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
-""", unsafe_allow_html=True)
+# ============================================================================
+# CACHING DECORATOR - Load model only once
+# ============================================================================
+@st.cache_resource
+def load_model():
+    """Load model with caching to prevent reloading on every rerun"""
+    try:
+        with open("fraud_detection_model.pkl", "rb") as f:
+            model = pickle.load(f)
+        return model
+    except FileNotFoundError:
+        return None
 
 try:
-    with open("fraud_detection_model.pkl", "rb") as f:
-        model = pickle.load(f)
-except:
-    st.error("Model file not found")
+    model = load_model()
+    if model is None:
+        st.error("Model file not found")
+        st.stop()
+except Exception as e:
+    st.error(f"Error loading model: {str(e)}")
     st.stop()
 
 st.markdown('<h1 style="text-align: center; color: #2c3e50;">Transaction Risk Assessment</h1>', unsafe_allow_html=True)
@@ -93,7 +109,7 @@ with tab1:
         margin=dict(l=20, r=20, t=60, b=20),
         font=dict(size=14)
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     if probability > 0.7:
         recommendation = "Block transaction and contact cardholder immediately"
@@ -106,7 +122,10 @@ with tab1:
 with tab2:
     st.header("Batch Fraud Detection")
     st.write("Upload an Excel file (.xlsx, .xls) or CSV file with transaction data to analyze multiple transactions at once.")
-    st.write("**For Google Sheets:** Download your sheet as CSV or Excel format, or copy the share link if publicly accessible.")
+    st.write("**For Google Sheets:** Download your sheet as CSV or Excel format.")
+    
+    # Add info about file size limitations
+    st.info("⚠️ **Performance Tip:** For files > 10,000 rows, consider processing in smaller batches for faster results.")
     
     st.subheader("Expected Excel Format")
     expected_format = pd.DataFrame({
@@ -118,7 +137,7 @@ with tab2:
         'used_pin_number': [0, 1, 0],
         'online_order': [1, 0, 0]
     })
-    st.dataframe(expected_format, use_container_width=True)
+    st.dataframe(expected_format, width='stretch')
     
     st.write("**Column Descriptions:**")
     st.write("- `distance_from_home`: Distance in km from cardholder's home address")
@@ -133,14 +152,23 @@ with tab2:
     
     if uploaded_file is not None:
         try:
+            # Show loading progress
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Load file
+            status_text.text("📂 Loading file...")
             if uploaded_file.name.endswith('.csv'):
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
+            progress_bar.progress(20)
             
             st.subheader("Uploaded Data Preview")
-            st.dataframe(df.head(), use_container_width=True)
+            st.dataframe(df.head(10), width='stretch')
+            st.caption(f"Showing first 10 of {len(df)} rows")
             
+            # Validate columns
             required_columns = [
                 'distance_from_home', 'distance_from_last_transaction', 
                 'ratio_to_median_purchase_price', 'repeat_retailer', 
@@ -150,23 +178,54 @@ with tab2:
             missing_columns = [col for col in required_columns if col not in df.columns]
             
             if missing_columns:
-                st.error(f"Missing required columns: {', '.join(missing_columns)}")
+                st.error(f"❌ Missing required columns: {', '.join(missing_columns)}")
                 st.stop()
             
+            progress_bar.progress(40)
+            
+            # Fill missing values
             for col in required_columns:
                 if col in MEANS:
                     df[col] = df[col].fillna(MEANS[col])
                 else:
                     df[col] = df[col].fillna(0)
             
-            X_batch = df[required_columns].values
+            # ================================================================
+            # PROCESS IN CHUNKS - Key fix for memory issues
+            # ================================================================
+            status_text.text("🔍 Analyzing transactions (processing in chunks)...")
             
-            predictions = model.predict(X_batch)
-            probabilities = model.predict_proba(X_batch)[:, 1]
+            chunk_size = 50000  # Process 50k rows at a time
+            predictions_list = []
+            probabilities_list = []
             
+            num_chunks = (len(df) + chunk_size - 1) // chunk_size
+            
+            for i in range(num_chunks):
+                start_idx = i * chunk_size
+                end_idx = min((i + 1) * chunk_size, len(df))
+                
+                chunk_data = df.iloc[start_idx:end_idx][required_columns].values
+                chunk_predictions = model.predict(chunk_data)
+                chunk_probabilities = model.predict_proba(chunk_data)[:, 1]
+                
+                predictions_list.append(chunk_predictions)
+                probabilities_list.append(chunk_probabilities)
+                
+                # Update progress
+                progress = 40 + int((i + 1) / num_chunks * 40)
+                progress_bar.progress(progress)
+            
+            progress_bar.progress(80)
+            
+            # Combine results
+            all_predictions = np.concatenate(predictions_list)
+            all_probabilities = np.concatenate(probabilities_list)
+            
+            # Add predictions to dataframe
             results_df = df.copy()
-            results_df['fraud_probability'] = probabilities
-            results_df['fraud_prediction'] = predictions
+            results_df['fraud_probability'] = all_probabilities
+            results_df['fraud_prediction'] = all_predictions
             results_df['fraud_status'] = results_df['fraud_prediction'].map({0: 'Not Fraud', 1: 'Fraud'})
             
             def get_recommendation(prob):
@@ -179,6 +238,10 @@ with tab2:
             
             results_df['recommendation'] = results_df['fraud_probability'].apply(get_recommendation)
             
+            progress_bar.progress(90)
+            status_text.text("✅ Analysis complete!")
+            
+            # Display results
             st.subheader("Fraud Detection Results")
             
             col1, col2, col3, col4 = st.columns(4)
@@ -194,10 +257,19 @@ with tab2:
                 high_risk = len(results_df[results_df['fraud_probability'] > 0.7])
                 st.metric("High Risk Transactions", high_risk)
             
-            display_df = results_df.copy()
-            display_df['fraud_probability'] = display_df['fraud_probability'].apply(lambda x: f"{x:.1%}")
+            # Display results table with pagination for large datasets
+            if len(results_df) > 1000:
+                st.warning(f"📊 Large dataset detected ({len(results_df):,} rows). Showing summary and top results below.")
+                display_df = results_df.nlargest(1000, 'fraud_probability').copy()
+                st.caption("Showing top 1,000 transactions by fraud probability")
+            else:
+                display_df = results_df.copy()
             
-            st.dataframe(display_df, use_container_width=True)
+            display_df['fraud_probability'] = display_df['fraud_probability'].apply(lambda x: f"{x:.1%}")
+            st.dataframe(display_df, width='stretch')
+            
+            # Download results
+            progress_bar.progress(95)
             
             def convert_df_to_excel(df):
                 output = BytesIO()
@@ -208,12 +280,13 @@ with tab2:
             excel_data = convert_df_to_excel(results_df)
             
             st.download_button(
-                label="Download Results as Excel",
+                label="📥 Download Full Results as Excel",
                 data=excel_data,
                 file_name="fraud_detection_results.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
+            # Visualization
             st.subheader("Results Visualization")
             
             fig_hist = go.Figure()
@@ -229,8 +302,22 @@ with tab2:
                 yaxis_title="Number of Transactions",
                 height=400
             )
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width='stretch')
+            
+            # Summary statistics
+            st.subheader("Summary Statistics")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Min Fraud Probability", f"{results_df['fraud_probability'].min():.2%}")
+            with col2:
+                st.metric("Max Fraud Probability", f"{results_df['fraud_probability'].max():.2%}")
+            with col3:
+                st.metric("Median Fraud Probability", f"{results_df['fraud_probability'].median():.2%}")
+            
+            progress_bar.progress(100)
             
         except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
-            st.write("Please make sure your Excel file has the correct format and column names.")
+            st.error(f"❌ Error processing file: {str(e)}")
+            st.write("Please make sure your file has the correct format and column names.")
+            import traceback
+            st.write(traceback.format_exc())
